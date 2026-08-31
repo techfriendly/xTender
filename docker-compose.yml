@@ -1,0 +1,262 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    restart: always
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_started
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: always
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEFAULT_LOCALE: ${APP_DEFAULT_LOCALE:-es}
+      APP_SUPPORTED_LOCALES: ${APP_SUPPORTED_LOCALES:-es,ca}
+      AUTH_MODE: ${AUTH_MODE:-development_headers}
+      API_AUTH_BEARER_TOKEN: ${API_AUTH_BEARER_TOKEN:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      POSTGRES_DSN: ${POSTGRES_DSN_INTERNAL:-postgresql://procureai:procureai@postgres:5432/procureai}
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+      MILVUS_DB: ${MILVUS_DB:-default}
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-kb_chunks_v1}
+      MILVUS_CPV_COLLECTION: ${MILVUS_CPV_COLLECTION:-cpv_codes_v1}
+      MILVUS_ENABLE_HYBRID: ${MILVUS_ENABLE_HYBRID:-true}
+      MILVUS_CONNECT_TIMEOUT_SECONDS: ${MILVUS_CONNECT_TIMEOUT_SECONDS:-2}
+      MILVUS_SEARCH_TIMEOUT_SECONDS: ${MILVUS_SEARCH_TIMEOUT_SECONDS:-3}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-http://host.docker.internal:8333}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-procureai}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-eu-west-1}
+      EMBEDDING_API_URL: ${EMBEDDING_API_URL:-http://embedding-api-fast:8010}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai_compatible}
+      LLM_BASE_URL: ${LLM_BASE_URL:-http://vllm:8000/v1}
+      LLM_MODEL: ${LLM_MODEL:-ver_modelo_real_en_destino}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CONTEXT_WINDOW: ${LLM_CONTEXT_WINDOW:-128000}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-8192}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.2}
+      LLM_TOP_P: ${LLM_TOP_P:-0.9}
+      LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-300}
+      LLM_STREAMING: ${LLM_STREAMING:-true}
+      RETRIEVAL_TOP_K: ${RETRIEVAL_TOP_K:-80}
+      RETRIEVAL_FINAL_K: ${RETRIEVAL_FINAL_K:-24}
+      RETRIEVAL_MAX_CHUNKS_PER_DOC: ${RETRIEVAL_MAX_CHUNKS_PER_DOC:-5}
+      RERANK_ENABLED: ${RERANK_ENABLED:-true}
+    ports:
+      - "${API_PUBLIC_PORT:-8000}:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      kb-loader:
+        condition: service_completed_successfully
+      embedding-api-fast:
+        condition: service_started
+
+  embedding-api-fast:
+    build:
+      context: .
+      dockerfile: apps/embedding_api/Dockerfile
+    init: true
+    runtime: ${EMBEDDING_RUNTIME:-runc}
+    restart: always
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_BACKEND: ${EMBEDDING_BACKEND:-real}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-auto}
+      EMBEDDING_BATCH_SIZE: ${EMBEDDING_BATCH_SIZE:-16}
+      EMBEDDING_MAX_LENGTH: ${EMBEDDING_MAX_LENGTH:-8192}
+      EMBEDDING_NORMALIZE: ${EMBEDDING_NORMALIZE:-true}
+      EMBEDDING_OPENAI_BASE_URL: ${EMBEDDING_OPENAI_BASE_URL:-}
+      EMBEDDING_OPENAI_MODEL: ${EMBEDDING_OPENAI_MODEL:-bge-m3}
+      EMBEDDING_OPENAI_API_KEY: ${EMBEDDING_OPENAI_API_KEY:-}
+      EMBEDDING_TIMEOUT_SECONDS: ${EMBEDDING_TIMEOUT_SECONDS:-30}
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-void}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility}
+    ports:
+      - "${EMBEDDING_PUBLIC_PORT:-8010}:8010"
+
+  postgres:
+    image: postgres:16
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-procureai}
+      POSTGRES_USER: ${POSTGRES_USER:-procureai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-procureai}
+    ports:
+      - "127.0.0.1:${POSTGRES_PUBLIC_PORT:-55432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/001_procureai_schema.sql:/docker-entrypoint-initdb.d/001_procureai_schema.sql:ro
+      - ./infra/postgres/002_kb_schema.sql:/docker-entrypoint-initdb.d/002_kb_schema.sql:ro
+      - ./infra/postgres/003_elicit_runtime.sql:/docker-entrypoint-initdb.d/003_elicit_runtime.sql:ro
+      - ./infra/postgres/004_template_repository.sql:/docker-entrypoint-initdb.d/004_template_repository.sql:ro
+      - ./infra/postgres/005_document_workflow.sql:/docker-entrypoint-initdb.d/005_document_workflow.sql:ro
+      - ./infra/postgres/006_category1.sql:/docker-entrypoint-initdb.d/006_category1.sql:ro
+      - ./infra/postgres/007_collaboration_knowledge.sql:/docker-entrypoint-initdb.d/007_collaboration_knowledge.sql:ro
+      - ./infra/postgres/008_public_naming.sql:/docker-entrypoint-initdb.d/008_public_naming.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+
+  kb-loader:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: on-failure
+    command:
+      - sh
+      - -lc
+      - python scripts/load_kb_postgres.py --dsn "postgresql://${POSTGRES_USER:-procureai}:${POSTGRES_PASSWORD:-procureai}@postgres:5432/${POSTGRES_DB:-procureai}" --kb data/kb/kb.json
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pcsp-kb-worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    cpus: ${PCSP_WORKER_CPUS:-2}
+    restart: always
+    command:
+      - python
+      - scripts/pcsp_monthly_kb_worker.py
+      - --loop
+    environment:
+      PYTHONUNBUFFERED: "1"
+      OMP_NUM_THREADS: ${PCSP_DOCUMENT_WORKER_THREADS:-1}
+      OPENBLAS_NUM_THREADS: ${PCSP_DOCUMENT_WORKER_THREADS:-1}
+      MKL_NUM_THREADS: ${PCSP_DOCUMENT_WORKER_THREADS:-1}
+      NUMEXPR_NUM_THREADS: ${PCSP_DOCUMENT_WORKER_THREADS:-1}
+      TOKENIZERS_PARALLELISM: "false"
+      POSTGRES_DSN: ${POSTGRES_DSN_INTERNAL:-postgresql://procureai:procureai@postgres:5432/procureai}
+      MILVUS_URI: ${MILVUS_URI:-http://milvus:19530}
+      MILVUS_DB: ${MILVUS_DB:-default}
+      MILVUS_USER: ${MILVUS_USER:-}
+      MILVUS_PASSWORD: ${MILVUS_PASSWORD:-}
+      MILVUS_TOKEN: ${MILVUS_TOKEN:-}
+      MILVUS_COLLECTION: ${MILVUS_COLLECTION:-kb_chunks_v1}
+      MILVUS_CONNECT_TIMEOUT_SECONDS: ${MILVUS_CONNECT_TIMEOUT_SECONDS:-2}
+      MILVUS_SEARCH_TIMEOUT_SECONDS: ${MILVUS_SEARCH_TIMEOUT_SECONDS:-3}
+      OBJECT_STORAGE_ENDPOINT: ${OBJECT_STORAGE_ENDPOINT:-http://host.docker.internal:8333}
+      OBJECT_STORAGE_BUCKET: ${OBJECT_STORAGE_BUCKET:-procureai}
+      OBJECT_STORAGE_ACCESS_KEY: ${OBJECT_STORAGE_ACCESS_KEY:-}
+      OBJECT_STORAGE_SECRET_KEY: ${OBJECT_STORAGE_SECRET_KEY:-}
+      OBJECT_STORAGE_REGION: ${OBJECT_STORAGE_REGION:-eu-west-1}
+      EMBEDDING_API_URL: ${EMBEDDING_API_URL:-http://embedding-api-fast:8010}
+      EMBEDDING_API_STYLE: ${EMBEDDING_API_STYLE:-}
+      EMBEDDING_OPENAI_MODEL: ${EMBEDDING_OPENAI_MODEL:-}
+      PCSP_FEEDS: ${PCSP_FEEDS:-s643,s1044}
+      PCSP_BACKFILL_START: ${PCSP_BACKFILL_START:-2019-01}
+      PCSP_BACKFILL_END: ${PCSP_BACKFILL_END:-}
+      PCSP_BACKFILL_ORDER: ${PCSP_BACKFILL_ORDER:-desc}
+      PCSP_MONTHS_PER_CYCLE: ${PCSP_MONTHS_PER_CYCLE:-4}
+      PCSP_WORKER_INTERVAL_SECONDS: ${PCSP_WORKER_INTERVAL_SECONDS:-300}
+      PCSP_RETRY_AFTER_SECONDS: ${PCSP_RETRY_AFTER_SECONDS:-86400}
+      PCSP_RUNNING_STALE_SECONDS: ${PCSP_RUNNING_STALE_SECONDS:-900}
+      PCSP_DOWNLOAD_SLEEP_SECONDS: ${PCSP_DOWNLOAD_SLEEP_SECONDS:-0.05}
+      PCSP_MAX_DOC_PAGES: ${PCSP_MAX_DOC_PAGES:-80}
+      PCSP_MAX_TENDERS_PER_MONTH: ${PCSP_MAX_TENDERS_PER_MONTH:-0}
+      PCSP_MAX_DOCUMENTS_PER_MONTH: ${PCSP_MAX_DOCUMENTS_PER_MONTH:-0}
+      PCSP_FLUSH_TENDERS: ${PCSP_FLUSH_TENDERS:-250}
+      PCSP_FLUSH_DOCUMENTS: ${PCSP_FLUSH_DOCUMENTS:-32}
+      PCSP_FLUSH_CHUNKS: ${PCSP_FLUSH_CHUNKS:-512}
+      PCSP_DOCUMENT_WORKERS: ${PCSP_DOCUMENT_WORKERS:-1}
+      PCSP_MILVUS_BATCH_SIZE: ${PCSP_MILVUS_BATCH_SIZE:-64}
+      PCSP_MILVUS_TIMEOUT_SECONDS: ${PCSP_MILVUS_TIMEOUT_SECONDS:-240}
+      PCSP_MILVUS_FLUSH_EVERY_BATCHES: ${PCSP_MILVUS_FLUSH_EVERY_BATCHES:-20}
+      PCSP_MILVUS_LOAD_AFTER_MONTH: ${PCSP_MILVUS_LOAD_AFTER_MONTH:-false}
+      PCSP_DOCUMENT_TYPES: ${PCSP_DOCUMENT_TYPES:-ppt,pcap}
+      PCSP_INDEX_MILVUS: ${PCSP_INDEX_MILVUS:-false}
+      PCSP_UPLOAD_SEAWEED: ${PCSP_UPLOAD_SEAWEED:-true}
+    volumes:
+      - pcsp_kb_runtime:/app/data/kb/runtime
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedding-api-fast:
+        condition: service_started
+
+  official-source-worker:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: always
+    command:
+      - python
+      - scripts/sync_official_sources.py
+      - --watch
+    environment:
+      PYTHONUNBUFFERED: "1"
+      POSTGRES_DSN: ${POSTGRES_DSN_INTERNAL:-postgresql://procureai:procureai@postgres:5432/procureai}
+      OFFICIAL_SOURCE_CONNECTORS: ${OFFICIAL_SOURCE_CONNECTORS:-boe,dogc,eurlex,tccsp,tacrc}
+      OFFICIAL_SOURCE_INTERVAL_HOURS: ${OFFICIAL_SOURCE_INTERVAL_HOURS:-24}
+      OFFICIAL_SOURCE_LIMIT: ${OFFICIAL_SOURCE_LIMIT:-100}
+      OFFICIAL_SOURCE_TENANT_ID: ${OFFICIAL_SOURCE_TENANT_ID:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.18
+    restart: always
+    command:
+      - etcd
+      - --advertise-client-urls=http://127.0.0.1:2379
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --data-dir=/etcd
+    volumes:
+      - etcd_data:/etcd
+
+  milvus:
+    image: ${MILVUS_IMAGE:-milvusdb/milvus:v2.5.17}
+    restart: always
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      ETCD_REQUESTTIMEOUT: ${MILVUS_ETCD_REQUEST_TIMEOUT_MS:-60000}
+      # Milvus upstream names its S3-compatible settings MINIO_*; these point to SeaweedFS.
+      MINIO_ADDRESS: ${SEAWEEDFS_S3_ADDRESS:-host.docker.internal:8333}
+      MINIO_ACCESS_KEY_ID: ${OBJECT_STORAGE_ACCESS_KEY:-seaweedfs}
+      MINIO_SECRET_ACCESS_KEY: ${OBJECT_STORAGE_SECRET_KEY:-change-me-change-me}
+      MINIO_USE_SSL: "false"
+      COMMON_SECURITY_AUTHORIZATIONENABLED: "true"
+      COMMON_SESSION_TTL: ${MILVUS_SESSION_TTL_SECONDS:-300}
+      COMMON_SESSION_RETRYTIMES: ${MILVUS_SESSION_RETRY_TIMES:-100}
+    ports:
+      - "127.0.0.1:19530:19530"
+      - "127.0.0.1:9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      etcd:
+        condition: service_started
+
+volumes:
+  postgres_data:
+  pcsp_kb_runtime:
+  etcd_data:
+  milvus_data:
